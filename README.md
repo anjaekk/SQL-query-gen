@@ -4,7 +4,7 @@
 자연어 요청을 SQL 쿼리로 변환해주는 RAG 기반 SQL Query Generator입니다.  
 Azure Web App을 통해 배포했으며, Streamlit을 통해 웹 UI로 손쉽게 테스트할 수 있습니다.
 </br>
-
+webapp-anjaekk-e5cacxhhh8apeghf.eastus2-01.azurewebsites.net
 
 
 ## 📌 주요 기능
