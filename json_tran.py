@@ -1,93 +1,119 @@
-import os
-import json
 import re
-from collections import defaultdict
+import json
+from pathlib import Path
 
 
-# -------------------------------
-# DDL을 JSON으로 변환
-# -------------------------------
-def parse_ddl(sql_text):
-    tables = defaultdict(lambda: {
-        "columns": [],
-        "column_comments": [],
-        "table_comment": "",
-        "schema_text": ""
-    })
+def parse_all_tables(ddl_text: str):
+    tables = []
+    # CREATE TABLE 구문 기준으로 분리
+    create_table_blocks = re.split(r"(?=CREATE\s+TABLE)", ddl_text, flags=re.IGNORECASE)
+    for block in create_table_blocks:
+        block = block.strip()
+        if not block:
+            continue
+        if not block.upper().startswith("CREATE TABLE"):
+            continue
 
-    # --- CREATE TABLE 블록 추출 ---
-    create_table_blocks = re.findall(
-        r'CREATE TABLE\s+"?[\w]+"?\."?([\w]+)"?\s*\((.*?)\)\s*(?:SEGMENT|PCTFREE|TABLESPACE|;)',
-        sql_text, re.S | re.I
-    )
+        table_info = {}
 
-    for table_name, columns_block in create_table_blocks:
-        column_lines = [line.strip() for line in columns_block.splitlines() if line.strip()]
-        for col in column_lines:
-            if col.upper().startswith(("CONSTRAINT", "PRIMARY", "FOREIGN")):
-                continue
-            match = re.match(r'"?([\w]+)"?\s+([A-Z0-9\(\)\s,_]+)', col, re.I)
-            if match:
-                col_name = match.group(1)
-                col_type = match.group(2).strip().rstrip(",")
-                tables[table_name]["columns"].append(col_name)
-                tables[table_name]["column_comments"].append("")  # 나중에 채움
+        # 테이블명 추출
+        table_match = re.search(r'CREATE\s+TABLE\s+"?([\w]+)"?\."?([\w]+)"?', block, re.IGNORECASE)
+        if table_match:
+            schema, table = table_match.groups()
+            table_info["schema"] = schema
+            table_info["table_name"] = table
+        else:
+            table_info["schema"] = None
+            table_info["table_name"] = "UNKNOWN"
 
-    # --- COMMENT ON TABLE ---
-    table_comments = re.findall(
-        r'COMMENT ON TABLE\s+[\w]+\."?([\w]+)"?\s+IS\s+\'([^\']*)\'',
-        sql_text, re.I
-    )
-    for table_name, comment in table_comments:
-        tables[table_name]["table_comment"] = comment
+        # 테이블 코멘트
+        table_comment_match = re.search(
+            rf"COMMENT\s+ON\s+TABLE\s+{table_info['schema']}\.{table_info['table_name']}\s+IS\s+'([^']+)'",
+            ddl_text,
+            re.IGNORECASE,
+        )
+        table_info["table_comment"] = table_comment_match.group(1) if table_comment_match else None
 
-    # --- COMMENT ON COLUMN ---
-    column_comments = re.findall(
-        r'COMMENT ON COLUMN\s+[\w]+\."?([\w]+)"?\."?([\w]+)"?\s+IS\s+\'([^\']*)\'',
-        sql_text, re.I
-    )
-    for table_name, column_name, comment in column_comments:
-        if table_name in tables:
-            try:
-                idx = tables[table_name]["columns"].index(column_name)
-                tables[table_name]["column_comments"][idx] = comment
-            except ValueError:
-                pass
+        # 컬럼 섹션
+        column_section_match = re.search(r"\(([\s\S]+?)\)\s*(SEGMENT|PCTFREE|TABLESPACE|;)", block)
+        columns = []
+        if column_section_match:
+            columns_raw = column_section_match.group(1).splitlines()
+            for line in columns_raw:
+                line = line.strip().rstrip(",")
+                if not line or line.upper().startswith(("CONSTRAINT", "PRIMARY KEY", "FOREIGN KEY")):
+                    continue
+                col_match = re.match(r'"?([\w]+)"?\s+([\w()]+)(.*)', line)
+                if col_match:
+                    col_name, col_type, rest = col_match.groups()
+                    col_info = {
+                        "name": col_name,
+                        "type": col_type,
+                        "nullable": "NOT NULL" not in rest.upper(),
+                        "default": None,
+                        "comment": None,
+                    }
+                    default_match = re.search(r"DEFAULT\s+([^ ,]+)", rest, re.IGNORECASE)
+                    if default_match:
+                        col_info["default"] = default_match.group(1)
+                    columns.append(col_info)
 
-    # --- schema_text 생성 ---
-    for table_name, meta in tables.items():
-        text = f"Table: {table_name}\n{meta['table_comment']}\n"
-        for col_name, col_comment in zip(meta["columns"], meta["column_comments"]):
-            text += f"- {col_name} : {col_comment}\n"
-        tables[table_name]["schema_text"] = text
+        # 컬럼 코멘트
+        for match in re.finditer(
+            rf"COMMENT\s+ON\s+COLUMN\s+{table_info['schema']}\.{table_info['table_name']}\.(\w+)\s+IS\s+'([^']+)'",
+            ddl_text,
+            re.IGNORECASE,
+        ):
+            col, comment = match.groups()
+            for c in columns:
+                if c["name"].upper() == col.upper():
+                    c["comment"] = comment
+
+        table_info["columns"] = columns
+
+        # PK
+        pk_match = re.search(r"PRIMARY KEY\s*\(([^)]+)\)", block, re.IGNORECASE)
+        if pk_match:
+            pk_cols = [c.strip().strip('"').upper() for c in pk_match.group(1).split(",")]
+            table_info["primary_key"] = pk_cols
+        else:
+            table_info["primary_key"] = []
+
+        # 인덱스
+        index_matches = re.findall(
+            rf'CREATE\s+(?:UNIQUE\s+)?INDEX\s+"?{table_info["schema"]}"?\."?([\w]+)"?\s+ON\s+"?{table_info["schema"]}"?\."?{table_info["table_name"]}"?\s*\(([^)]+)\)',
+            ddl_text,
+            re.IGNORECASE,
+        )
+        indexes = []
+        for idx_name, idx_cols in index_matches:
+            idx_columns = [c.strip().strip('"') for c in idx_cols.split(",")]
+            indexes.append({"name": idx_name, "columns": idx_columns})
+        table_info["indexes"] = indexes
+
+        tables.append(table_info)
 
     return tables
 
 
-def ddl_to_json(sql_file, json_file):
-    with open(sql_file, "r", encoding="utf-8") as f:
-        sql_text = f.read()
-    schema = parse_ddl(sql_text)
+def ddl_folder_to_json(folder: str, output_file: str):
+    ddl_files = list(Path(folder).glob("*.sql"))
+    if not ddl_files:
+        print(f"❌ {folder} 에 .sql 파일 없음")
+        return
 
-    # Azure Search 업로드용 JSON 리스트 형태로 변환
-    json_list = []
-    for table_name, meta in schema.items():
-        json_list.append({
-            "id": table_name,
-            "table_name": table_name,
-            "table_comment": meta["table_comment"],
-            "columns": meta["columns"],
-            "column_comments": meta["column_comments"],
-            "schema_text": meta["schema_text"]
-        })
+    all_tables = []
+    for ddl_file in ddl_files:
+        text = ddl_file.read_text(encoding="utf-8")
+        parsed_tables = parse_all_tables(text)
+        all_tables.extend(parsed_tables)
+        print(f"✅ {ddl_file.name} → {len(parsed_tables)}개 테이블 변환")
 
-    with open(json_file, "w", encoding="utf-8") as f:
-        json.dump(json_list, f, indent=2, ensure_ascii=False)
-    print(f"✅ JSON 변환 완료: {json_file}")
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(all_tables, f, ensure_ascii=False, indent=2)
 
-if __name__ == "__main__":
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    sql_path = os.path.join(script_dir, r"C:\Users\User\anjaekk\MVP\schema.sql")
-    json_path = os.path.join(script_dir, r"C:\Users\User\anjaekk\MVP\schema.json")
-    print(f"📂 읽는 파일: {sql_path}")
-    ddl_to_json(sql_path, json_path)
+    print(f"🎉 JSON 생성 완료 → {output_file}")
+
+
+# 사용 예시
+ddl_folder_to_json(r"C:\Users\User\anjaekk\MVP", r"C:\Users\User\anjaekk\MVP\schema2.json")

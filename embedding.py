@@ -32,7 +32,7 @@ AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_KEY")
 AZURE_INDEX_NAME = os.getenv("INDEX_NAME")
 VECTOR_SEARCH_PROFILE = os.getenv("VECTOR_SEARCH_PROFILE")
 
-SCHEMA_JSON_PATH = r"C:\Users\User\anjaekk\MVP\schema.json"
+SCHEMA_JSON_PATH = r"C:\Users\User\anjaekk\MVP\schema2.json"
 
 
 openai_client = AzureOpenAI(
@@ -49,6 +49,7 @@ search_client = SearchClient(
     credential=search_credential
 )
 index_client = SearchIndexClient(endpoint=AZURE_SEARCH_ENDPOINT, credential=search_credential)
+
 
 # -------------------------------
 # Azure Search 인덱스 생성 (벡터 포함)
@@ -86,23 +87,55 @@ try:
 except Exception as e:
     print(f"⚠️ Index creation skipped or failed: {e}")
 
+
 # -------------------------------
 # JSON 읽기
 # -------------------------------
 with open(SCHEMA_JSON_PATH, "r", encoding="utf-8") as f:
     tables = json.load(f)
 
-# -------------------------------
-# 문서 업로드 + 임베딩 생성
-# -------------------------------
 documents = []
 for table in tables:
-    schema_text = table.get("schema_text", "").strip()
-    if not schema_text:
-        continue
+    schema = table.get("schema", "")
+    table_name = table.get("table_name", "")
+    table_comment = table.get("table_comment", "") or ""
 
-    columns = [c for c in table.get("columns", []) if c]
-    column_comments = [c for c in table.get("column_comments", []) if c]
+    # 컬럼 메타데이터 생성
+    column_lines = []
+    column_comments = []
+    for col in table.get("columns", []):
+        col_name = col.get("name", "")
+        col_type = col.get("type", "")
+        nullable = "NOT NULL" if col.get("nullable") is False else "NULL"
+        default = f"DEFAULT {col.get('default')}" if col.get("default") else ""
+        comment = col.get("comment") or ""
+
+        column_lines.append(f"- {col_name} {col_type} {nullable} {default} -- {comment}")
+        if comment:
+            column_comments.append(comment)
+
+    # PK/인덱스 문자열
+    pk_str = ", ".join(table.get("primary_key", []))
+    index_lines = []
+    for idx in table.get("indexes", []):
+        idx_cols = ", ".join(idx.get("columns", []))
+        index_lines.append(f"- {idx.get('name')} ({idx_cols})")
+
+    # schema_text 구성
+    schema_text = f"""
+        Schema: {schema}
+        Table: {table_name}
+        Comment: {table_comment}
+
+        Columns:
+        {chr(10).join(column_lines)}
+
+        Primary Key:
+        {pk_str if pk_str else "(없음)"}
+
+        Indexes:
+        {chr(10).join(index_lines) if index_lines else "(없음)"}
+    """.strip()
 
     # 임베딩 생성
     try:
@@ -112,21 +145,25 @@ for table in tables:
         )
         vector = emb_response.data[0].embedding
     except Exception as e:
-        print(f"❌ Embedding failed for {table.get('id')}: {e}")
+        print(f"❌ Embedding failed for {schema}.{table_name}: {e}")
         continue
 
+    # 문서 생성
     doc = {
-        "id": table.get("id"),
-        "table_name": table.get("table_name", ""),
-        "table_comment": table.get("table_comment", ""),
-        "columns": columns,
+        "id": f"{schema}_{table_name}",
+        "table_name": table_name,
+        "table_comment": table_comment,
+        "columns": [c.get("name", "") for c in table.get("columns", [])],
         "column_comments": column_comments,
         "schema_text": schema_text,
         "embedding": vector
     }
     documents.append(doc)
 
+
+# -------------------------------
 # 업로드
+# -------------------------------
 def chunk_list(lst, chunk_size=50):
     for i in range(0, len(lst), chunk_size):
         yield lst[i:i + chunk_size]
