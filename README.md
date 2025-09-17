@@ -19,20 +19,26 @@ Azure Web App을 통해 배포했으며, Streamlit을 통해 웹 UI로 손쉽게
 ## 📌 작업 내용
 
 1. **DB에서 DDL 스키마 정보 추출**  
-   - 데이터베이스 테이블, 컬럼, 데이터 타입, 제약조건 등 메타데이터를 DDL 형태로 추출  
+   - 데이터베이스 테이블, 컬럼 등 DDL 형태로 추출  
    - COLUMN COMMENTS도 함께 추출해 컬럼 의미 확보
 
 2. **스키마 정보를 JSON으로 변환**  
    - 추출한 DDL을 Python 스크립트로 파싱하여 JSON 포맷으로 변환  
-   - 각 테이블별로 `table_name`, `columns`, `data_type`, `description` 필드를 포함  
    - 예시:
      ```json
      {
-       "table_name": "테이블명",
+       "id": "CNTR_MASTER",
+       "table_name": "CNTR_MASTER",
+       "table_comment": "계약마스터",
        "columns": [
-         {"name": "CNTR_NO", "type": "VARCHAR(20)", "description": "계약번호"},
-         {"name": "CNTR_DATE", "type": "DATE", "description": "계약일"}
-       ]
+         "CNTR_NO",
+         "CNTR_DATE"
+         ],
+       "column_comments": [
+         "계약번호",
+         "계약일"
+         ],
+     "schema_text": "Table: CNTR_MASTER\n계약마스터\n- CNTR_NO : 계약번호\n- CNTR_DATE : 계약일\n"
      }
      ```
 
