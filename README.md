@@ -5,9 +5,13 @@
 Azure Web App을 통해 배포했으며, Streamlit을 통해 웹 UI로 손쉽게 테스트할 수 있습니다.
 </br>
 
+
+
 ## 📌 주요 기능
 - **자연어 → SQL 쿼리 변환**  
   사용자가 입력한 요청을 이해하고 적절한 SQL 쿼리를 생성
+- **검색된 정보로 테이블, 컬럼 정보 검색**  
+  검색된 정보 기반으로 테이블과 컬럼 정보를 검색 가능
 - **RAG 기반 검색**  
   Azure Cognitive Search를 이용해 사전에 업로드한 테이블 스키마를 검색하여 정확한 쿼리를 생성
 - **Streamlit 웹 UI 지원**  
@@ -19,26 +23,44 @@ Azure Web App을 통해 배포했으며, Streamlit을 통해 웹 UI로 손쉽게
 ## 📌 작업 내용
 
 1. **DB에서 DDL 스키마 정보 추출**  
-   - 데이터베이스 테이블, 컬럼 등 DDL 형태로 추출  
+   - 데이터베이스 테이블, 컬럼, 타입, PK, INDEX 등 DDL 형태로 추출  
    - COLUMN COMMENTS도 함께 추출해 컬럼 의미 확보
 
 2. **스키마 정보를 JSON으로 변환**  
    - 추출한 DDL을 Python 스크립트로 파싱하여 JSON 포맷으로 변환  
    - 예시:
      ```json
-     {
-       "id": "CNTR_MASTER",
-       "table_name": "CNTR_MASTER",
-       "table_comment": "계약마스터",
-       "columns": [
-         "CNTR_NO",
-         "CNTR_DATE"
-         ],
-       "column_comments": [
-         "계약번호",
-         "계약일"
-         ],
-     "schema_text": "Table: CNTR_MASTER\n계약마스터\n- CNTR_NO : 계약번호\n- CNTR_DATE : 계약일\n"
+      {
+        "schema": "TESTSC",
+        "table_name": "CNTR_TABLE",
+        "table_comment": "계약정보",
+        "columns": [
+              {
+                "name": "CNTR_NO",
+                "type": "VARCHAR2(18)",
+                "nullable": false,
+                "default": null,
+                "comment": "계약번호"
+              },
+              {
+                "name": "CNTR_DATE",
+                "type": "VARCHAR2(14)",
+                "nullable": false,
+                "default": "to_char(sysdate)",
+                "comment": "계약일"
+              },
+        ],
+            "primary_key": [
+              "CNTR_NO"
+            ],
+           "indexes": [
+              {
+                "name": "CNTR_TABLE_PK",
+                "columns": [
+                  "CNTR_NO"
+                 ]
+              }
+           ]
      }
      ```
 
@@ -60,3 +82,30 @@ Azure Web App을 통해 배포했으며, Streamlit을 통해 웹 UI로 손쉽게
 6. **쿼리 실행 및 검증**  
    - 생성된 SQL을 테스트 DB에 실행하여 실제 결과 검증  
    - 쿼리의 정확성과 실행 가능 여부를 평가
+  
+## 📌 사용 예시
+1. 쿼리 생성
+```
+	- 계약번호로 계약명 검색
+	- ESPINHD테이블에 계약번호로 delete하는 쿼리 만들어줘
+	- 계약번호 1234의 계약명과 하자 보증 금액, 품목정보 검색하는 쿼리 만들어줘
+```
+2. 테이블 정보 문의
+```
+ - ESECPFM 이건 무슨 테이블이야
+```
+### 첫 메인 화면
+<img width="1213" height="620" alt="image" src="https://github.com/user-attachments/assets/4e6c5139-67ea-409d-9667-31ec3447adc3" />
+
+### 쿼리 검색 및 테이블, 컬럼정보 검색 가능
+<img width="1191" height="549" alt="image" src="https://github.com/user-attachments/assets/fc5eeff3-72ad-4054-9add-ad3c61bfe1ae" />
+
+# .env 파일 예시
+```
+AZURE_OPENAI_KEY=your_openai_key
+AZURE_OPENAI_ENDPOINT=https://<your-endpoint>.openai.azure.com/
+AZURE_SEARCH_API_KEY=your_search_key
+AZURE_SEARCH_ENDPOINT=https://<your-search>.search.windows.net
+AZURE_INDEX_NAME=your_index_name
+AZURE_DEPLOYMENT_MODEL=text-embedding-3-large
+```
